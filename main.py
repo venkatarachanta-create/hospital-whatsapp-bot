@@ -1,6 +1,6 @@
 import os
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import  Response
 from twilio.twiml.messaging_response import MessagingResponse
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -87,7 +87,7 @@ async def whatsapp_reply(request: Request):
             # Basic validation
             if len(parts) < 2:
                 msg.body("❌ Please enter in format: Name Time\nExample: Ravi 5 PM")
-                return PlainTextResponse(str(response))
+                return Response(content=str(response), media_type="application/xml")
 
             name = parts[0].capitalize()
             time = " ".join(parts[1:])
@@ -113,4 +113,4 @@ async def whatsapp_reply(request: Request):
             print("ERROR:", e)
             msg.body("⚠️ Something went wrong. Please try again.")
 
-    return PlainTextResponse(str(response))
+    return Response(content=str(response), media_type="application/xml")
