@@ -4,6 +4,7 @@ from fastapi.responses import Response
 from datetime import datetime
 import gspread
 import json
+import uuid
 from oauth2client.service_account import ServiceAccountCredentials
 from twilio.twiml.messaging_response import MessagingResponse
 
@@ -18,20 +19,17 @@ scope = [
 ]
 
 creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-
 if not creds_json:
     raise ValueError("GOOGLE_CREDENTIALS_JSON is missing!")
 
 creds_dict = json.loads(creds_json)
-
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 gs_client = gspread.authorize(creds)
 
-# 👉 Use SHEET ID (IMPORTANT)
 sheet = gs_client.open_by_key(os.getenv("SHEET_ID")).sheet1
 
 # -----------------------------
-# 🧠 User state storage
+# 🧠 User state
 # -----------------------------
 user_state = {}
 
@@ -47,54 +45,58 @@ async def whatsapp_reply(
     response = MessagingResponse()
 
     # -----------------------------
-    # 🟢 First time / Reset
+    # 🟢 First time
     # -----------------------------
     if From not in user_state:
         user_state[From] = {"step": "menu"}
 
-        msg = """👋 Welcome to ABC Clinic!
+        response.message("""👋 Welcome to ABC Clinic!
 
 1️⃣ Book Appointment  
 2️⃣ Doctor Timings  
 3️⃣ Location  
 
-Please reply with option number."""
-        response.message(msg)
-        return Response(content=str(response), media_type="application/xml")
+Please reply with option number.""")
+        return Response(str(response), media_type="application/xml")
 
     state = user_state[From]
 
     # -----------------------------
-    # 📋 MENU HANDLING
+    # 📋 MENU
     # -----------------------------
     if state["step"] == "menu":
         if incoming_msg == "1":
             state["step"] = "booking"
-            response.message(
-                "Please share your *name and preferred time*.\n\nExample: Ravi 5 PM"
-            )
+            response.message("Please share your name and time\nExample: Ravi 5 PM")
+
         elif incoming_msg == "2":
             response.message("🩺 Doctor available from 9 AM to 6 PM")
+
         elif incoming_msg == "3":
             response.message("📍 ABC Clinic, Main Road, Hyderabad")
-        else:
-            response.message("Please select a valid option: 1, 2, or 3")
 
-        return Response(content=str(response), media_type="application/xml")
+        else:
+            response.message("Please select 1, 2 or 3")
+
+        return Response(str(response), media_type="application/xml")
 
     # -----------------------------
-    # 📝 BOOKING HANDLING
+    # 📝 BOOKING
     # -----------------------------
     if state["step"] == "booking":
         try:
             parts = incoming_msg.split()
             name = parts[0]
-            time_str = " ".join(parts[1:])
+            time_str = " ".join(parts[1:]).upper().replace(".", "")
 
-            # Convert time to datetime
-            appointment_time = datetime.strptime(time_str, "%I:%M %p")
+            # Handle formats like 5 PM / 5:30 PM
+            if ":" in time_str:
+                appointment_time = datetime.strptime(time_str, "%I:%M %p")
+            else:
+                appointment_time = datetime.strptime(time_str, "%I %p")
 
             now = datetime.now()
+
             appointment_datetime = now.replace(
                 hour=appointment_time.hour,
                 minute=appointment_time.minute,
@@ -105,45 +107,53 @@ Please reply with option number."""
             date_str = now.strftime("%Y-%m-%d")
 
             # -----------------------------
-            # ✅ Save to Google Sheet (SAFE)
+            # ❌ Prevent duplicate booking
             # -----------------------------
+            records = sheet.get_all_records()
+            for row in records:
+                if row["Phone"] == From and row["Date"] == date_str:
+                    response.message("⚠️ You already booked today.")
+                    return Response(str(response), media_type="application/xml")
+
+            # -----------------------------
+            # ✅ Save booking
+            # -----------------------------
+            booking_id = str(uuid.uuid4())[:8]
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
             sheet.append_row([
+                booking_id,
                 name,
                 From,
                 time_str,
                 date_str,
                 "Pending",
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                created_at
             ])
 
             # -----------------------------
-            # ✅ Confirmation Message
+            # ✅ Confirmation
             # -----------------------------
-            msg = f"""✅ Appointment Confirmed!
+            response.message(f"""✅ Appointment Confirmed!
 
 👤 Name: {name}
 ⏰ Time: {time_str}
 
-⏳ You will receive a reminder 1 hour before your appointment.
+⏳ Reminder will be sent 1 hour before.
 
-Thank you! 🙏"""
+Thank you! 🙏""")
 
-            response.message(msg)
-
-            # Reset state
             user_state[From] = {"step": "menu"}
 
-        except Exception as e:
-            response.message(
-                "⚠️ Invalid format.\n\nPlease enter like:\nRavi 5 PM"
-            )
+        except:
+            response.message("⚠️ Format error\nExample: Ravi 5 PM")
 
-        return Response(content=str(response), media_type="application/xml")
+        return Response(str(response), media_type="application/xml")
 
     # -----------------------------
-    # 🔄 Fallback
+    # 🔄 fallback
     # -----------------------------
-    response.message("Something went wrong. Please type 'hi' to restart.")
     user_state[From] = {"step": "menu"}
+    response.message("Type 'hi' to restart")
 
-    return Response(content=str(response), media_type="application/xml")
+    return Response(str(response), media_type="application/xml")

@@ -8,3 +8,4 @@ oauth2client
 schedule
 python-multipart
 pytz
+uuid
