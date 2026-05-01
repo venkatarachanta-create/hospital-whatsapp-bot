@@ -32,7 +32,7 @@ user_state = {}
 # -----------------------------
 # 📩 WhatsApp Webhook
 # -----------------------------
-@app.post("/")
+@app.post("/whatsapp")
 async def whatsapp_reply(
     Body: str = Form(...),
     From: str = Form(...)
