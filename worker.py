@@ -2,11 +2,12 @@ import os
 import json
 import time
 from datetime import datetime, timedelta
+import pytz
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from twilio.rest import Client
-
+from datetime import datetime
 
 # ==============================
 # 1. GOOGLE SHEETS AUTH (ENV BASED)
@@ -64,7 +65,9 @@ while True:
                 )
 
                 reminder_time = appointment_time - timedelta(hours=1)
-                now = datetime.now()
+
+                ist = pytz.timezone("Asia/Kolkata")
+                now = datetime.now(ist).replace(tzinfo=None)
                 
                 print(f"Row {i} | Name: {name}")
                 print("NOW:", now.strftime("%Y-%m-%d %I:%M:%S %p"))
