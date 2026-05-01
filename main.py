@@ -1,116 +1,143 @@
 import os
-from fastapi import FastAPI, Request
-from fastapi.responses import  Response
-from twilio.twiml.messaging_response import MessagingResponse
-from openai import OpenAI
-from dotenv import load_dotenv
+from fastapi import FastAPI, Form
+from fastapi.responses import Response
 from datetime import datetime
-
-# Google Sheets
 import gspread
+import json
 from oauth2client.service_account import ServiceAccountCredentials
-
-load_dotenv()
+from twilio.twiml.messaging_response import MessagingResponse
 
 app = FastAPI()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# ---------------- GOOGLE SHEETS SETUP ----------------
+# -----------------------------
+# 🔐 Google Sheets Setup
+# -----------------------------
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive"
 ]
 
-import json
-creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS"))
-
+creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-
-
 gs_client = gspread.authorize(creds)
 
-sheet = gs_client.open_by_key("1ya-5LcWhbM9w4p0BRPazsVamTiX1G5F0MG3MhpNuFAw").sheet1
-# ----------------------------------------------------
+# 👉 Use SHEET ID (IMPORTANT)
+sheet = gs_client.open_by_key(os.getenv("SHEET_ID")).sheet1
 
-
-# Simple in-memory storage
+# -----------------------------
+# 🧠 User state storage
+# -----------------------------
 user_state = {}
 
-
-@app.post("/whatsapp")
-async def whatsapp_reply(request: Request):
-    form = await request.form()
-    incoming_msg = form.get("Body", "").strip()
-    user_number = form.get("From")
-
+# -----------------------------
+# 📩 WhatsApp Webhook
+# -----------------------------
+@app.post("/")
+async def whatsapp_reply(
+    Body: str = Form(...),
+    From: str = Form(...)
+):
+    incoming_msg = Body.strip()
     response = MessagingResponse()
-    msg = response.message()
 
-    # Initialize user
-    if user_number not in user_state:
-        user_state[user_number] = {"step": "start"}
+    # -----------------------------
+    # 🟢 First time / Reset
+    # -----------------------------
+    if From not in user_state:
+        user_state[From] = {"step": "menu"}
 
-    state = user_state[user_number]
+        msg = """👋 Welcome to ABC Clinic!
 
-    # ---------------- STEP 1: MENU ----------------
-    if state["step"] == "start":
-        msg.body(
-            "👋 Welcome to ABC Clinic!\n\n"
-            "1️⃣ Book Appointment\n"
-            "2️⃣ Doctor Timings\n"
-            "3️⃣ Location"
-        )
-        state["step"] = "menu"
+1️⃣ Book Appointment  
+2️⃣ Doctor Timings  
+3️⃣ Location  
 
-    # ---------------- STEP 2: MENU HANDLING ----------------
-    elif state["step"] == "menu":
+Please reply with option number."""
+        response.message(msg)
+        return Response(content=str(response), media_type="application/xml")
+
+    state = user_state[From]
+
+    # -----------------------------
+    # 📋 MENU HANDLING
+    # -----------------------------
+    if state["step"] == "menu":
         if incoming_msg == "1":
-            msg.body("Please share your *name* and preferred *time*.\n\nExample: Ravi 5 PM")
             state["step"] = "booking"
-
+            response.message(
+                "Please share your *name and preferred time*.\n\nExample: Ravi 5 PM"
+            )
         elif incoming_msg == "2":
-            msg.body("🩺 Doctor available from 10 AM – 6 PM.")
-
+            response.message("🩺 Doctor available from 9 AM to 6 PM")
         elif incoming_msg == "3":
-            msg.body("📍 Kukatpally, Hyderabad.")
-
+            response.message("📍 ABC Clinic, Main Road, Hyderabad")
         else:
-            msg.body("Please select a valid option:\n1️⃣ 2️⃣ 3️⃣")
+            response.message("Please select a valid option: 1, 2, or 3")
 
-    # ---------------- STEP 3: BOOKING ----------------
-    elif state["step"] == "booking":
+        return Response(content=str(response), media_type="application/xml")
 
+    # -----------------------------
+    # 📝 BOOKING HANDLING
+    # -----------------------------
+    if state["step"] == "booking":
         try:
             parts = incoming_msg.split()
+            name = parts[0]
+            time_str = " ".join(parts[1:])
 
-            # Basic validation
-            if len(parts) < 2:
-                msg.body("❌ Please enter in format: Name Time\nExample: Ravi 5 PM")
-                return Response(content=str(response), media_type="application/xml")
+            # Convert time to datetime
+            appointment_time = datetime.strptime(time_str, "%I:%M %p")
 
-            name = parts[0].capitalize()
-            time = " ".join(parts[1:])
-
-            # Save to Google Sheet
-            sheet.append_row([
-                name,
-                user_number,
-                time,
-                datetime.now().strftime("%Y-%m-%d")
-            ])
-
-            msg.body(
-                f"✅ Appointment booked!\n\n"
-                f"👤 Name: {name}\n"
-                f"⏰ Time: {time}\n\n"
-                f"Our team will confirm shortly."
+            now = datetime.now()
+            appointment_datetime = now.replace(
+                hour=appointment_time.hour,
+                minute=appointment_time.minute,
+                second=0,
+                microsecond=0
             )
 
-            state["step"] = "start"
+            date_str = now.strftime("%Y-%m-%d")
+
+            # -----------------------------
+            # ✅ Save to Google Sheet (SAFE)
+            # -----------------------------
+            sheet.append_row([
+                name,
+                From,
+                time_str,
+                date_str,
+                "Pending",
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ])
+
+            # -----------------------------
+            # ✅ Confirmation Message
+            # -----------------------------
+            msg = f"""✅ Appointment Confirmed!
+
+👤 Name: {name}
+⏰ Time: {time_str}
+
+⏳ You will receive a reminder 1 hour before your appointment.
+
+Thank you! 🙏"""
+
+            response.message(msg)
+
+            # Reset state
+            user_state[From] = {"step": "menu"}
 
         except Exception as e:
-            print("ERROR:", e)
-            msg.body("⚠️ Something went wrong. Please try again.")
+            response.message(
+                "⚠️ Invalid format.\n\nPlease enter like:\nRavi 5 PM"
+            )
+
+        return Response(content=str(response), media_type="application/xml")
+
+    # -----------------------------
+    # 🔄 Fallback
+    # -----------------------------
+    response.message("Something went wrong. Please type 'hi' to restart.")
+    user_state[From] = {"step": "menu"}
 
     return Response(content=str(response), media_type="application/xml")
