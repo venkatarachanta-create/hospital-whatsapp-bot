@@ -21,7 +21,7 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 gs_client = gspread.authorize(creds)
 
 # 👉 Use EXACT sheet name OR ID
-sheet = gs_client.open("Hospital Whatsapp Bot").sheet1
+sheet = gs_client.open_by_key("1ya-5LcWhbM9w4p0BRPazsVamTiX1G5F0MG3MhpNuFAw").sheet1
 
 
 # ==============================
@@ -95,4 +95,3 @@ while True:
 
     # ⏳ Wait before next check
     time.sleep(30)
-    
