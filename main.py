@@ -135,7 +135,11 @@ Please reply with option number."""
             # -----------------------------
             # ✅ Save booking
             # -----------------------------
+            records = sheet.get_all_records()
+            booking_id = len(records) + 1
+            
             sheet.append_row([
+                booking_id,  # Booking_ID (optional auto)
                 name,
                 From,
                 time_str,
