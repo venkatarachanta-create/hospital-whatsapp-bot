@@ -1,10 +1,9 @@
 import os
+import json
 from fastapi import FastAPI, Form
 from fastapi.responses import Response
 from datetime import datetime
 import gspread
-import json
-import uuid
 from oauth2client.service_account import ServiceAccountCredentials
 from twilio.twiml.messaging_response import MessagingResponse
 
@@ -19,10 +18,12 @@ scope = [
 ]
 
 creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+
 if not creds_json:
     raise ValueError("GOOGLE_CREDENTIALS_JSON is missing!")
 
 creds_dict = json.loads(creds_json)
+
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 gs_client = gspread.authorize(creds)
 
@@ -32,6 +33,19 @@ sheet = gs_client.open_by_key(os.getenv("SHEET_ID")).sheet1
 # 🧠 User state
 # -----------------------------
 user_state = {}
+
+# -----------------------------
+# ⏰ Flexible time parser
+# -----------------------------
+def parse_time(input_time: str):
+    raw = input_time.lower().replace(".", "").replace(" ", "")
+    raw = raw.replace("am", " AM").replace("pm", " PM")
+
+    if ":" in raw:
+        return datetime.strptime(raw, "%I:%M %p")
+    else:
+        return datetime.strptime(raw, "%I %p")
+
 
 # -----------------------------
 # 📩 WhatsApp Webhook
@@ -45,18 +59,19 @@ async def whatsapp_reply(
     response = MessagingResponse()
 
     # -----------------------------
-    # 🟢 First time
+    # 🟢 First interaction
     # -----------------------------
     if From not in user_state:
         user_state[From] = {"step": "menu"}
 
-        response.message("""👋 Welcome to ABC Clinic!
+        msg = """👋 Welcome to ABC Clinic!
 
 1️⃣ Book Appointment  
 2️⃣ Doctor Timings  
 3️⃣ Location  
 
-Please reply with option number.""")
+Please reply with option number."""
+        response.message(msg)
         return Response(str(response), media_type="application/xml")
 
     state = user_state[From]
@@ -67,16 +82,15 @@ Please reply with option number.""")
     if state["step"] == "menu":
         if incoming_msg == "1":
             state["step"] = "booking"
-            response.message("Please share your name and time\nExample: Ravi 5 PM")
-
+            response.message(
+                "Please share your *name and preferred time*.\n\nExample: Ravi 5 PM"
+            )
         elif incoming_msg == "2":
             response.message("🩺 Doctor available from 9 AM to 6 PM")
-
         elif incoming_msg == "3":
             response.message("📍 ABC Clinic, Main Road, Hyderabad")
-
         else:
-            response.message("Please select 1, 2 or 3")
+            response.message("Please select a valid option: 1, 2, or 3")
 
         return Response(str(response), media_type="application/xml")
 
@@ -87,73 +101,78 @@ Please reply with option number.""")
         try:
             parts = incoming_msg.split()
             name = parts[0]
-            time_str = " ".join(parts[1:]).upper().replace(".", "")
+            time_input = " ".join(parts[1:])
 
-            # Handle formats like 5 PM / 5:30 PM
-            if ":" in time_str:
-                appointment_time = datetime.strptime(time_str, "%I:%M %p")
-            else:
-                appointment_time = datetime.strptime(time_str, "%I %p")
+            # ✅ Parse time (flexible)
+            parsed_time = parse_time(time_input)
 
             now = datetime.now()
 
             appointment_datetime = now.replace(
-                hour=appointment_time.hour,
-                minute=appointment_time.minute,
+                hour=parsed_time.hour,
+                minute=parsed_time.minute,
                 second=0,
                 microsecond=0
             )
 
             date_str = now.strftime("%Y-%m-%d")
+            time_str = parsed_time.strftime("%I:%M %p")
 
             # -----------------------------
-            # ❌ Prevent duplicate booking
+            # 🔁 Duplicate check (same slot only)
             # -----------------------------
             records = sheet.get_all_records()
+
             for row in records:
-                if row["Phone"] == From and row["Date"] == date_str:
-                    response.message("⚠️ You already booked today.")
+                if (
+                    str(row.get("Phone")).strip() == From and
+                    str(row.get("Date")).strip() == date_str and
+                    str(row.get("Time")).strip().lower() == time_str.lower()
+                ):
+                    response.message("⚠️ You already booked this time slot.")
                     return Response(str(response), media_type="application/xml")
 
             # -----------------------------
             # ✅ Save booking
             # -----------------------------
-            booking_id = str(uuid.uuid4())[:8]
-            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
             sheet.append_row([
-                booking_id,
                 name,
                 From,
                 time_str,
                 date_str,
                 "Pending",
-                created_at
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ])
 
             # -----------------------------
-            # ✅ Confirmation
+            # ✅ Confirmation message
             # -----------------------------
-            response.message(f"""✅ Appointment Confirmed!
+            msg = f"""✅ Appointment Confirmed!
 
 👤 Name: {name}
 ⏰ Time: {time_str}
 
-⏳ Reminder will be sent 1 hour before.
+⏳ You will receive a reminder 1 hour before your appointment.
 
-Thank you! 🙏""")
+Thank you! 🙏"""
 
+            response.message(msg)
+
+            # Reset state
             user_state[From] = {"step": "menu"}
 
-        except:
-            response.message("⚠️ Format error\nExample: Ravi 5 PM")
+        except Exception as e:
+            print("ERROR:", e)
+            response.message(
+                "⚠️ Invalid format.\n\nTry like:\nRavi 5 PM\nRavi 2:30 PM"
+            )
 
         return Response(str(response), media_type="application/xml")
 
     # -----------------------------
-    # 🔄 fallback
+    # 🔄 Fallback
     # -----------------------------
+    response.message("Something went wrong. Please type 'hi' to restart.")
     user_state[From] = {"step": "menu"}
-    response.message("Type 'hi' to restart")
 
     return Response(str(response), media_type="application/xml")
