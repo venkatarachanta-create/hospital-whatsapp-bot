@@ -65,13 +65,13 @@ while True:
 
                 reminder_time = appointment_time - timedelta(hours=1)
                 now = datetime.now()
-
-                # 🔍 Debug logs
-                print(f"\n📌 Row {i}")
-                print("Now:", now)
-                print("Appointment:", appointment_time)
-                print("Reminder:", reminder_time)
-
+                
+                print(f"Row {i} | Name: {name}")
+                print("NOW:", now.strftime("%Y-%m-%d %I:%M:%S %p"))
+                print("APPOINTMENT:", appointment_time.strftime("%Y-%m-%d %I:%M:%S %p"))
+                print("REMINDER:", reminder_time.strftime("%Y-%m-%d %I:%M:%S %p"))
+                print("================================")
+                
                 # ✅ RANGE CHECK (IMPORTANT FIX)
                 if reminder_time <= now <= reminder_time + timedelta(minutes=5):
                     print(f"📤 Sending reminder to {name}...")
