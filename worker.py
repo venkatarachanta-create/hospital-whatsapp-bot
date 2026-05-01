@@ -73,7 +73,7 @@ while True:
                 print("Reminder:", reminder_time)
 
                 # ✅ RANGE CHECK (IMPORTANT FIX)
-                if reminder_time <= now <= reminder_time + timedelta(minutes=2):
+                if reminder_time <= now <= reminder_time + timedelta(minutes=5):
                     print(f"📤 Sending reminder to {name}...")
 
                     message = client.messages.create(
@@ -94,4 +94,4 @@ while True:
         print("❌ Worker error:", e)
 
     # ⏳ Wait before next check
-    time.sleep(30)
+    time.sleep(10)
