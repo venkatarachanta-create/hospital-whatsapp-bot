@@ -1,101 +1,98 @@
 import os
-import time
 import json
+import time
 from datetime import datetime, timedelta
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from twilio.rest import Client
 
-# ---------------------------
-# GOOGLE SHEETS SETUP
-# ---------------------------
+
+# ==============================
+# 1. GOOGLE SHEETS AUTH (ENV BASED)
+# ==============================
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive"
 ]
 
 creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
-
-creds = ServiceAccountCredentials.from_json_keyfile_dict(
-    creds_dict, scope
-)
-
+creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 gs_client = gspread.authorize(creds)
 
-sheet = gs_client.open_by_key("1ya-5LcWhbM9w4p0BRPazsVamTiX1G5F0MG3MhpNuFAw").sheet1
+# 👉 Use EXACT sheet name OR ID
+sheet = gs_client.open("Hospital Whatsapp Bot").sheet1
 
 
-# ---------------------------
-# TWILIO SETUP
-# ---------------------------
-twilio_client = Client(
+# ==============================
+# 2. TWILIO CONFIG
+# ==============================
+client = Client(
     os.getenv("TWILIO_ACCOUNT_SID"),
     os.getenv("TWILIO_AUTH_TOKEN")
 )
 
-FROM_WHATSAPP = "whatsapp:+14155238886"
+TWILIO_WHATSAPP_NUMBER = "whatsapp:+14155238886"
 
 
-# ---------------------------
-# HELPER FUNCTION
-# ---------------------------
-def send_reminder(name, phone, time_str, date_str):
-    message = f"⏰ Reminder\n\nHi {name},\nYou have an appointment at {time_str} today."
-
-    twilio_client.messages.create(
-        from_=FROM_WHATSAPP,
-        to=phone,
-        body=message
-    )
-
-
-# ---------------------------
-# MAIN LOOP
-# ---------------------------
-print("🚀 Worker started...")
+# ==============================
+# 3. REMINDER LOOP
+# ==============================
+print("🚀 Worker started... Checking reminders...")
 
 while True:
     try:
-        print("🔍 Checking reminders...")
+        rows = sheet.get_all_values()
 
-        rows = sheet.get_all_records()
-
-        for i, row in enumerate(rows, start=2):  # row 2 onwards
-            name = row.get("Name")
-            phone = row.get("Phone")
-            time_str = row.get("Time")
-            date_str = row.get("Date")
-            status = row.get("Status", "")
-
-            if status == "Sent":
-                continue
-
-            if not (name and phone and time_str and date_str):
-                continue
-
+        # Skip header row
+        for i, row in enumerate(rows[1:], start=2):
             try:
-                appointment_dt = datetime.strptime(
+                name = row[0]
+                phone = row[1]
+                time_str = row[2]
+                date_str = row[3]
+                status = row[4] if len(row) > 4 else ""
+
+                # Skip if already sent
+                if status == "Sent":
+                    continue
+
+                # Combine date + time
+                appointment_time = datetime.strptime(
                     f"{date_str} {time_str}",
-                    "%Y-%m-%d %I %p"
+                    "%Y-%m-%d %I:%M %p"
                 )
-            except:
-                continue
 
-            reminder_time = appointment_dt - timedelta(hours=1)
-            now = datetime.now()
+                reminder_time = appointment_time - timedelta(hours=1)
+                now = datetime.now()
 
-            # 🔔 Trigger condition (within 1 min window)
-            if reminder_time <= now <= reminder_time + timedelta(minutes=1):
-                send_reminder(name, phone, time_str, date_str)
+                # 🔍 Debug logs
+                print(f"\n📌 Row {i}")
+                print("Now:", now)
+                print("Appointment:", appointment_time)
+                print("Reminder:", reminder_time)
 
-                print(f"✅ Reminder sent to {name}")
+                # ✅ RANGE CHECK (IMPORTANT FIX)
+                if reminder_time <= now <= reminder_time + timedelta(minutes=2):
+                    print(f"📤 Sending reminder to {name}...")
 
-                # Mark as sent (Column E = Status)
-                sheet.update_cell(i, 5, "Sent")
+                    message = client.messages.create(
+                        body=f"⏰ Reminder: Hi {name}, your appointment is at {time_str}.",
+                        from_=TWILIO_WHATSAPP_NUMBER,
+                        to=phone
+                    )
 
-        time.sleep(60)
+                    print("✅ Sent:", message.sid)
+
+                    # Update status column (5th column)
+                    sheet.update_cell(i, 5, "Sent")
+
+            except Exception as e:
+                print(f"⚠️ Error in row {i}: {e}")
 
     except Exception as e:
-        print("❌ Error:", e)
-        time.sleep(30)
+        print("❌ Worker error:", e)
+
+    # ⏳ Wait before next check
+    time.sleep(30)
+    
