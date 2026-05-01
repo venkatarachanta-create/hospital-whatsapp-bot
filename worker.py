@@ -23,7 +23,7 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(
 
 gs_client = gspread.authorize(creds)
 
-sheet = gs_client.open("Hospital Whatsapp Bot").sheet1
+sheet = gs_client.open_by_key("1ya-5LcWhbM9w4p0BRPazsVamTiX1G5F0MG3MhpNuFAw").sheet1
 
 
 # ---------------------------
