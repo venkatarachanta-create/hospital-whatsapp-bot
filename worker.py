@@ -36,25 +36,44 @@ FROM_WHATSAPP = os.getenv("TWILIO_WHATSAPP_NUMBER")
 while True:
     records = sheet.get_all_records()
     now = datetime.now()
-
+    
     for i, row in enumerate(records, start=2):
-        try:
-            name = row["Name"]
-            phone = row["Phone"]
-            time_str = row["Time"]
-            date_str = row["Date"]
-            status = row["Status"]
+    try:
+        name = row.get("Name")
+        phone = row.get("Phone")
+        time_str = row.get("Time")
+        date_str = row.get("Date")
+        status = row.get("Status")
 
-            if status == "Reminder Sent":
-                continue
+        # ✅ Skip invalid rows
+        if not time_str or not date_str:
+            print(f"Skipping row {i} → Missing time/date")
+            continue
 
-            appointment = datetime.strptime(
-                date_str + " " + time_str,
-                "%Y-%m-%d %I:%M %p"
-            )
+        # ✅ Skip already sent reminders
+        if status == "Reminder Sent":
+            continue
 
-            reminder_time = appointment - timedelta(hours=1)
+        # ✅ Clean values (VERY IMPORTANT)
+        time_str = str(time_str).strip()
+        date_str = str(date_str).strip()
 
+        # ❌ Skip corrupted rows like "Pending 2026-05-01"
+        if "Pending" in time_str or "Pending" in date_str:
+            print(f"Skipping row {i} → Corrupted data")
+            continue
+
+        # ✅ Parse safely
+        appointment = datetime.strptime(
+            f"{date_str} {time_str}",
+            "%Y-%m-%d %I:%M %p"
+        )
+
+        # 👉 continue your reminder logic...
+
+    except Exception as e:
+        print(f"Error in row {i}: {e}")
+    
             # 🔥 Safe window
             if reminder_time <= now <= reminder_time + timedelta(minutes=5):
 

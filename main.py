@@ -56,12 +56,13 @@ async def whatsapp_reply(
     From: str = Form(...)
 ):
     incoming_msg = Body.strip()
+    incoming_msg_lower = incoming_msg.lower()   # 👈 ADD HERE
     response = MessagingResponse()
 
     # -----------------------------
     # 🟢 First interaction
     # -----------------------------
-    if From not in user_state:
+    if incoming_msg_lower in ["hi", "hello", "start", "menu"]:
         user_state[From] = {"step": "menu"}
 
         msg = """👋 Welcome to ABC Clinic!
