@@ -1,13 +1,16 @@
 import os
 import json
+import time
 from fastapi import FastAPI, Form
 from fastapi.responses import Response
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from twilio.twiml.messaging_response import MessagingResponse
-from datetime import datetime, timedelta, timezone
 
+# -----------------------------
+# ⏰ Timezone (IST)
+# -----------------------------
 IST = timezone(timedelta(hours=5, minutes=30))
 
 app = FastAPI()
@@ -21,12 +24,10 @@ scope = [
 ]
 
 creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-
 if not creds_json:
     raise ValueError("GOOGLE_CREDENTIALS_JSON is missing!")
 
 creds_dict = json.loads(creds_json)
-
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 gs_client = gspread.authorize(creds)
 
@@ -41,7 +42,9 @@ user_state = {}
 # ⏰ Flexible time parser
 # -----------------------------
 def parse_time(input_time: str):
-    raw = input_time.lower().replace(".", "").replace(" ", "")
+    raw = input_time.lower().replace(".", "").strip()
+
+    # normalize
     raw = raw.replace("am", " AM").replace("pm", " PM")
 
     if ":" in raw:
@@ -49,6 +52,33 @@ def parse_time(input_time: str):
     else:
         return datetime.strptime(raw, "%I %p")
 
+# -----------------------------
+# ✅ SAFE INSERT (NO DATA LOSS)
+# -----------------------------
+def safe_insert(sheet, name, phone, time_str, date_str):
+    for attempt in range(3):
+        try:
+            all_rows = sheet.get_all_values()
+            next_row = len(all_rows) + 1
+
+            sheet.update(f"A{next_row}:G{next_row}", [[
+                next_row - 1,  # Booking_ID
+                name,
+                phone,
+                time_str,
+                date_str,
+                "Pending",
+                datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+            ]])
+
+            print(f"✅ Inserted row {next_row}")
+            return True
+
+        except Exception as e:
+            print("Retrying insert:", e)
+            time.sleep(1)
+
+    return False
 
 # -----------------------------
 # 📩 WhatsApp Webhook
@@ -59,11 +89,12 @@ async def whatsapp_reply(
     From: str = Form(...)
 ):
     incoming_msg = Body.strip()
-    incoming_msg_lower = incoming_msg.lower()   # 👈 ADD HERE
+    incoming_msg_lower = incoming_msg.lower()
+
     response = MessagingResponse()
 
     # -----------------------------
-    # 🟢 First interaction
+    # 🟢 ALWAYS allow restart
     # -----------------------------
     if incoming_msg_lower in ["hi", "hello", "start", "menu"]:
         user_state[From] = {"step": "menu"}
@@ -78,7 +109,11 @@ Please reply with option number."""
         response.message(msg)
         return Response(str(response), media_type="application/xml")
 
-    state = user_state[From]
+    # -----------------------------
+    # 🧠 Safe state handling
+    # -----------------------------
+    state = user_state.get(From, {"step": "menu"})
+    user_state[From] = state
 
     # -----------------------------
     # 📋 MENU
@@ -107,17 +142,10 @@ Please reply with option number."""
             name = parts[0]
             time_input = " ".join(parts[1:])
 
-            # ✅ Parse time (flexible)
+            # ✅ Parse flexible time
             parsed_time = parse_time(time_input)
 
             now = datetime.now(IST)
-
-            appointment_datetime = now.replace(
-                hour=parsed_time.hour,
-                minute=parsed_time.minute,
-                second=0,
-                microsecond=0
-            )
 
             date_str = now.strftime("%Y-%m-%d")
             time_str = parsed_time.strftime("%I:%M %p")
@@ -137,20 +165,9 @@ Please reply with option number."""
                     return Response(str(response), media_type="application/xml")
 
             # -----------------------------
-            # ✅ Save booking
+            # ✅ SAFE SAVE
             # -----------------------------
-            records = sheet.get_all_records()
-            booking_id = len(records) + 1
-            
-            sheet.append_row([
-                booking_id,  # Booking_ID (optional auto)
-                name,
-                From,
-                time_str,
-                date_str,
-                "Pending",
-                datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-            ])
+            safe_insert(sheet, name, From, time_str, date_str)
 
             # -----------------------------
             # ✅ Confirmation message
