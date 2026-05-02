@@ -6,6 +6,9 @@ from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from twilio.twiml.messaging_response import MessagingResponse
+from datetime import datetime, timedelta, timezone
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 app = FastAPI()
 
