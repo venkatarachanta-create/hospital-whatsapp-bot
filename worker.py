@@ -43,7 +43,10 @@ print("🚀 Worker started...")
 while True:
     try:
         records = sheet.get_all_records()
-        now = datetime.now()
+        from datetime import datetime, timedelta, timezone
+
+        IST = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(IST)
 
         for i, row in enumerate(records, start=2):
             try:
@@ -80,7 +83,7 @@ while True:
                 appointment = datetime.strptime(
                     f"{date_str} {time_str}",
                     "%Y-%m-%d %I:%M %p"
-                )
+                ).replace(tzinfo=IST)
 
                 # ⏰ Reminder 1 hour before
                 reminder_time = appointment - timedelta(hours=1)
