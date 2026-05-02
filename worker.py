@@ -14,7 +14,12 @@ scope = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
+creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
+
+if not creds_json:
+    raise ValueError("GOOGLE_CREDENTIALS_JSON is missing")
+
+creds_dict = json.loads(creds_json)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 gs_client = gspread.authorize(creds)
 
@@ -30,65 +35,88 @@ client = Client(
 
 FROM_WHATSAPP = os.getenv("TWILIO_WHATSAPP_NUMBER")
 
+print("🚀 Worker started...")
+
 # -----------------------------
 # 🔁 Loop
 # -----------------------------
 while True:
-    records = sheet.get_all_records()
-    now = datetime.now()
-    
-    for i, row in enumerate(records, start=2):
     try:
-        name = row.get("Name")
-        phone = row.get("Phone")
-        time_str = row.get("Time")
-        date_str = row.get("Date")
-        status = row.get("Status")
+        records = sheet.get_all_records()
+        now = datetime.now()
 
-        # ✅ Skip invalid rows
-        if not time_str or not date_str:
-            print(f"Skipping row {i} → Missing time/date")
-            continue
+        for i, row in enumerate(records, start=2):
+            try:
+                name = row.get("Name")
+                phone = row.get("Phone")
+                time_str = row.get("Time")
+                date_str = row.get("Date")
+                status = row.get("Status")
 
-        # ✅ Skip already sent reminders
-        if status == "Reminder Sent":
-            continue
+                # -----------------------------
+                # ✅ Skip invalid rows
+                # -----------------------------
+                if not time_str or not date_str:
+                    print(f"Skipping row {i} → Missing data")
+                    continue
 
-        # ✅ Clean values (VERY IMPORTANT)
-        time_str = str(time_str).strip()
-        date_str = str(date_str).strip()
+                if status == "Reminder Sent":
+                    continue
 
-        # ❌ Skip corrupted rows like "Pending 2026-05-01"
-        if "Pending" in time_str or "Pending" in date_str:
-            print(f"Skipping row {i} → Corrupted data")
-            continue
+                # -----------------------------
+                # ✅ Clean values
+                # -----------------------------
+                time_str = str(time_str).strip()
+                date_str = str(date_str).strip()
 
-        # ✅ Parse safely
-        appointment = datetime.strptime(
-            f"{date_str} {time_str}",
-            "%Y-%m-%d %I:%M %p"
-        )
+                # ❌ Skip corrupted rows
+                if "Pending" in time_str or "Pending" in date_str:
+                    print(f"Skipping row {i} → Corrupted")
+                    continue
 
-        # 👉 continue your reminder logic...
-
-    except Exception as e:
-        print(f"Error in row {i}: {e}")
-    
-            # 🔥 Safe window
-            if reminder_time <= now <= reminder_time + timedelta(minutes=5):
-
-                client.messages.create(
-                    body=f"⏰ Reminder: Hi {name}, your appointment is at {time_str}",
-                    from_=FROM_WHATSAPP,
-                    to=phone
+                # -----------------------------
+                # ✅ Convert to datetime
+                # -----------------------------
+                appointment = datetime.strptime(
+                    f"{date_str} {time_str}",
+                    "%Y-%m-%d %I:%M %p"
                 )
 
-                # ✅ mark sent
-                sheet.update_cell(i, 6, "Reminder Sent")
+                # ⏰ Reminder 1 hour before
+                reminder_time = appointment - timedelta(hours=1)
 
-                print(f"✅ Reminder sent to {name}")
+                # -----------------------------
+                # 🧪 Debug logs
+                # -----------------------------
+                print(f"Row {i} | {name}")
+                print("NOW:", now.strftime("%Y-%m-%d %I:%M:%S %p"))
+                print("APPOINTMENT:", appointment)
+                print("REMINDER:", reminder_time)
+                print("-----------------------------")
 
-        except Exception as e:
-            print("Error:", e)
+                # -----------------------------
+                # ✅ Send reminder (5 min window)
+                # -----------------------------
+                if reminder_time <= now <= reminder_time + timedelta(minutes=5):
 
+                    print(f"📤 Sending reminder to {name}")
+
+                    client.messages.create(
+                        body=f"⏰ Reminder: Hi {name}, your appointment is at {time_str}",
+                        from_=FROM_WHATSAPP,
+                        to=phone
+                    )
+
+                    # ✅ Update status (Column 6 = Status)
+                    sheet.update_cell(i, 6, "Reminder Sent")
+
+                    print(f"✅ Reminder sent to {name}")
+
+            except Exception as row_error:
+                print(f"❌ Row {i} error:", row_error)
+
+    except Exception as main_error:
+        print("🔥 Worker error:", main_error)
+
+    # ⏳ Wait 1 minute
     time.sleep(60)
