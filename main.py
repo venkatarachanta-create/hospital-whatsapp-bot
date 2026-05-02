@@ -110,7 +110,7 @@ Please reply with option number."""
             # ✅ Parse time (flexible)
             parsed_time = parse_time(time_input)
 
-            now = datetime.now()
+            now = datetime.now(IST)
 
             appointment_datetime = now.replace(
                 hour=parsed_time.hour,
@@ -149,7 +149,7 @@ Please reply with option number."""
                 time_str,
                 date_str,
                 "Pending",
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
             ])
 
             # -----------------------------
