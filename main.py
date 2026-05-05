@@ -42,7 +42,7 @@ creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 gs_client = gspread.authorize(creds)
 
-sheet = gs_client.open_by_key(os.getenv("1ya-5LcWhbM9w4p0BRPazsVamTiX1G5F0MG3MhpNuFAw")).sheet1
+sheet = gs_client.open_by_key(os.getenv("SHEET_ID")).sheet1
 
 # -----------------------------
 # 🧠 User state
