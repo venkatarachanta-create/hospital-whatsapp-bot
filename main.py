@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import re
 from fastapi import FastAPI, Form
 from fastapi.responses import Response
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,20 @@ IST = timezone(timedelta(hours=5, minutes=30))
 app = FastAPI()
 
 # -----------------------------
+# 👨‍⚕️ Doctors + Slots
+# -----------------------------
+DOCTORS = {
+    "1": {
+        "name": "Dr. Sharma",
+        "slots": ["09:00 AM", "10:00 AM", "11:00 AM", "02:00 PM"]
+    },
+    "2": {
+        "name": "Dr. Reddy",
+        "slots": ["12:00 PM", "01:00 PM", "03:00 PM", "04:00 PM"]
+    }
+}
+
+# -----------------------------
 # 🔐 Google Sheets Setup
 # -----------------------------
 scope = [
@@ -23,15 +38,11 @@ scope = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
-if not creds_json:
-    raise ValueError("GOOGLE_CREDENTIALS_JSON is missing!")
-
-creds_dict = json.loads(creds_json)
+creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 gs_client = gspread.authorize(creds)
 
-sheet = gs_client.open_by_key(os.getenv("1ya-5LcWhbM9w4p0BRPazsVamTiX1G5F0MG3MhpNuFAwSHEET_ID")).sheet1
+sheet = gs_client.open_by_key(os.getenv("SHEET_ID")).sheet1
 
 # -----------------------------
 # 🧠 User state
@@ -39,79 +50,49 @@ sheet = gs_client.open_by_key(os.getenv("1ya-5LcWhbM9w4p0BRPazsVamTiX1G5F0MG3Mhp
 user_state = {}
 
 # -----------------------------
-# ⏰ Flexible time parser
+# ⏰ Robust Time Extractor
 # -----------------------------
-def parse_time(input_time: str):
-    raw = input_time.lower().replace(".", "").strip()
+def extract_time(text):
+    text = text.lower().replace(".", "").strip()
+    text = text.replace(";", ":").replace("-", ":").replace(" ", "")
 
-    # normalize
-    raw = raw.replace("am", " AM").replace("pm", " PM")
+    match = re.search(r'(\d{1,2})(:?(\d{2}))?(am|pm)', text)
 
-    if ":" in raw:
-        return datetime.strptime(raw, "%I:%M %p")
-    else:
-        return datetime.strptime(raw, "%I %p")
+    if not match:
+        raise ValueError("Invalid time format")
 
-# -----------------------------
-# ✅ SAFE INSERT (NO DATA LOSS)
-# -----------------------------
-def safe_insert(sheet, name, phone, time_str, date_str):
-    for attempt in range(3):
-        try:
-            all_rows = sheet.get_all_values()
-            next_row = len(all_rows) + 1
+    hour = match.group(1)
+    minute = match.group(3) if match.group(3) else "00"
+    period = match.group(4).upper()
 
-            sheet.update(f"A{next_row}:G{next_row}", [[
-                next_row - 1,  # Booking_ID
-                name,
-                phone,
-                time_str,
-                date_str,
-                "Pending",
-                datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-            ]])
-
-            print(f"✅ Inserted row {next_row}")
-            return True
-
-        except Exception as e:
-            print("Retrying insert:", e)
-            time.sleep(1)
-
-    return False
+    clean_time = f"{hour}:{minute} {period}"
+    return datetime.strptime(clean_time, "%I:%M %p")
 
 # -----------------------------
 # 📩 WhatsApp Webhook
 # -----------------------------
 @app.post("/whatsapp")
-async def whatsapp_reply(
-    Body: str = Form(...),
-    From: str = Form(...)
-):
+async def whatsapp_reply(Body: str = Form(...), From: str = Form(...)):
+
     incoming_msg = Body.strip()
-    incoming_msg_lower = incoming_msg.lower()
+    msg = incoming_msg.lower()
 
     response = MessagingResponse()
 
     # -----------------------------
-    # 🟢 ALWAYS allow restart
+    # 🟢 START
     # -----------------------------
-    if incoming_msg_lower in ["hi", "hello", "start", "menu"]:
+    if msg in ["hi", "hello", "start", "menu"]:
         user_state[From] = {"step": "menu"}
 
-        msg = """👋 Welcome to ABC Clinic!
+        response.message("""👋 Welcome to ABC Clinic!
 
 1️⃣ Book Appointment  
 2️⃣ Doctor Timings  
 3️⃣ Location  
-
-Please reply with option number."""
-        response.message(msg)
+""")
         return Response(str(response), media_type="application/xml")
 
-    # -----------------------------
-    # 🧠 Safe state handling
-    # -----------------------------
     state = user_state.get(From, {"step": "menu"})
     user_state[From] = state
 
@@ -119,85 +100,153 @@ Please reply with option number."""
     # 📋 MENU
     # -----------------------------
     if state["step"] == "menu":
+
         if incoming_msg == "1":
-            state["step"] = "booking"
-            response.message(
-                "Please share your *name and preferred time*.\n\nExample: Ravi 5 PM"
-            )
+            state["step"] = "select_doctor"
+
+            msg_text = "👨‍⚕️ Select Doctor:\n\n"
+            for k, v in DOCTORS.items():
+                msg_text += f"{k}. {v['name']}\n"
+
+            response.message(msg_text)
+
         elif incoming_msg == "2":
-            response.message("🩺 Doctor available from 9 AM to 6 PM")
+            response.message("🩺 Doctor available 9 AM to 6 PM")
+
         elif incoming_msg == "3":
-            response.message("📍 ABC Clinic, Main Road, Hyderabad")
+            response.message("📍 ABC Clinic, Main Road")
+
         else:
-            response.message("Please select a valid option: 1, 2, or 3")
+            response.message("Reply with 1, 2 or 3")
 
         return Response(str(response), media_type="application/xml")
 
     # -----------------------------
-    # 📝 BOOKING
+    # 👨‍⚕️ DOCTOR SELECT
+    # -----------------------------
+    if state["step"] == "select_doctor":
+
+        if incoming_msg in DOCTORS:
+            state["doctor"] = DOCTORS[incoming_msg]["name"]
+            state["slots"] = DOCTORS[incoming_msg]["slots"]
+            state["step"] = "booking"
+
+            slots = "\n".join(state["slots"])
+
+            response.message(f"""🧑‍⚕️ {state['doctor']}
+
+Available Slots:
+{slots}
+
+👉 Enter:
+Name + Date + Time
+
+Examples:
+Ravi 5 PM
+Ravi tomorrow 4 PM
+Ravi 10 May 10 AM
+""")
+        else:
+            response.message("Select 1 or 2")
+
+        return Response(str(response), media_type="application/xml")
+
+    # -----------------------------
+    # 📝 BOOKING (FINAL FIXED)
     # -----------------------------
     if state["step"] == "booking":
         try:
-            parts = incoming_msg.split()
-            name = parts[0]
-            time_input = " ".join(parts[1:])
-
-            # ✅ Parse flexible time
-            parsed_time = parse_time(time_input)
-
+            parts = msg.split()
+            name = parts[0].capitalize()
             now = datetime.now(IST)
 
-            date_str = now.strftime("%Y-%m-%d")
-            time_str = parsed_time.strftime("%I:%M %p")
+            # -----------------------------
+            # 📅 DATE
+            # -----------------------------
+            if "tomorrow" in msg:
+                booking_date = now + timedelta(days=1)
+                clean_msg = msg.replace(name.lower(), "").replace("tomorrow", "")
+
+            elif re.search(r'\d{1,2}\s+[a-zA-Z]+', msg):
+                date_match = re.search(r'(\d{1,2}\s+[a-zA-Z]+)', msg)
+                date_part = date_match.group(1)
+
+                booking_date = datetime.strptime(date_part, "%d %b")
+                booking_date = booking_date.replace(year=now.year)
+
+                clean_msg = msg.replace(name.lower(), "").replace(date_part, "")
+
+            else:
+                booking_date = now
+                clean_msg = msg.replace(name.lower(), "")
 
             # -----------------------------
-            # 🔁 Duplicate check (same slot only)
+            # ⏰ TIME (FIXED)
+            # -----------------------------
+            parsed_time = extract_time(clean_msg)
+
+            final_time = parsed_time.strftime("%I:%M %p")
+            date_str = booking_date.strftime("%Y-%m-%d")
+
+            # -----------------------------
+            # 🚫 SLOT VALIDATION
+            # -----------------------------
+            if final_time not in state.get("slots", []):
+                response.message("❌ Invalid slot. Choose from list.")
+                return Response(str(response), media_type="application/xml")
+
+            # -----------------------------
+            # 🚫 DOUBLE BOOKING
             # -----------------------------
             records = sheet.get_all_records()
 
             for row in records:
                 if (
-                    str(row.get("Phone")).strip() == From and
-                    str(row.get("Date")).strip() == date_str and
-                    str(row.get("Time")).strip().lower() == time_str.lower()
+                    str(row.get("Date")) == date_str and
+                    str(row.get("Time")).lower() == final_time.lower() and
+                    str(row.get("Doctor")) == state.get("doctor")
                 ):
-                    response.message("⚠️ You already booked this time slot.")
+                    response.message("❌ Slot already booked.")
                     return Response(str(response), media_type="application/xml")
 
             # -----------------------------
-            # ✅ SAFE SAVE
+            # 💾 SAVE
             # -----------------------------
-            safe_insert(sheet, name, From, time_str, date_str)
+            sheet.append_row([
+                name,
+                From,
+                state.get("doctor"),
+                final_time,
+                date_str,
+                "Pending",
+                datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+            ])
 
-            # -----------------------------
-            # ✅ Confirmation message
-            # -----------------------------
-            msg = f"""✅ Appointment Confirmed!
+            response.message(f"""✅ Appointment Confirmed!
 
-👤 Name: {name}
-⏰ Time: {time_str}
+👤 {name}
+👨‍⚕️ {state.get("doctor")}
+📅 {date_str}
+⏰ {final_time}
+""")
 
-⏳ You will receive a reminder 1 hour before your appointment.
-
-Thank you! 🙏"""
-
-            response.message(msg)
-
-            # Reset state
             user_state[From] = {"step": "menu"}
 
         except Exception as e:
             print("ERROR:", e)
-            response.message(
-                "⚠️ Invalid format.\n\nTry like:\nRavi 5 PM\nRavi 2:30 PM"
-            )
+            response.message("""⚠️ Invalid format
+
+Try:
+Ravi 5 PM
+Ravi tomorrow 4 PM
+Ravi 10 May 10 AM""")
 
         return Response(str(response), media_type="application/xml")
 
     # -----------------------------
-    # 🔄 Fallback
+    # FALLBACK
     # -----------------------------
-    response.message("Something went wrong. Please type 'hi' to restart.")
+    response.message("Type 'hi' to restart")
     user_state[From] = {"step": "menu"}
 
     return Response(str(response), media_type="application/xml")
