@@ -22,11 +22,13 @@ app = FastAPI()
 DOCTORS = {
     "1": {
         "name": "Dr. Sharma",
-        "slots": ["09:00 AM", "10:00 AM", "11:00 AM", "02:00 PM"]
+        "start": "09:00 AM",
+        "end": "02:00 PM"
     },
     "2": {
         "name": "Dr. Reddy",
-        "slots": ["12:00 PM", "01:00 PM", "03:00 PM", "04:00 PM"]
+        "start": "12:00 PM",
+        "end": "06:00 PM"
     }
 }
 
@@ -131,11 +133,11 @@ async def whatsapp_reply(Body: str = Form(...), From: str = Form(...)):
             state["slots"] = DOCTORS[incoming_msg]["slots"]
             state["step"] = "booking"
 
-            slots = "\n".join(state["slots"])
+            slots = f"{DOCTORS[incoming_msg]['start']} to {DOCTORS[incoming_msg]['end']}"
 
             response.message(f"""🧑‍⚕️ {state['doctor']}
 
-Available Slots:
+Available Time:
 {slots}
 
 👉 Enter:
@@ -191,10 +193,23 @@ Ravi 10 May 10 AM
             # -----------------------------
             # 🚫 SLOT VALIDATION
             # -----------------------------
-            if final_time not in state.get("slots", []):
-                response.message("❌ Invalid slot. Choose from list.")
-                return Response(str(response), media_type="application/xml")
+            doctor_start = datetime.strptime(
+                DOCTORS["1" if state["doctor"] == "Dr. Sharma" else "2"]["start"],
+                "%I:%M %p"
+            )
+            doctor_end = datetime.strptime(
+                DOCTORS["1" if state["doctor"] == "Dr. Sharma" else "2"]["end"],
+                "%I:%M %p"
+            )
+            booking_time_obj = datetime.strptime(final_time, "%I:%M %p")
 
+            if not (doctor_start <= booking_time_obj <= doctor_end):
+                response.message(
+                    f"❌ Doctor available only between "
+                    f"{doctor_start.strftime('%I:%M %p')} and "
+                    f"{doctor_end.strftime('%I:%M %p')}"
+                )
+                return Response(str(response), media_type="application/xml")
             # -----------------------------
             # 🚫 DOUBLE BOOKING
             # -----------------------------
