@@ -255,17 +255,18 @@ Ravi 10 May 10 AM
             # -----------------------------
             # Save Appointment
             # -----------------------------
-            sheet.append_row([
-                name,
-                From,
-                state.get("doctor"),
-                final_time,
-                date_str,
-                "Pending",
-                datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-            ])
-
-            response.message(f"""✅ Appointment Confirmed!
+            sheet.append_row(
+                [
+                    name,
+                    From,
+                    state.get("doctor"),
+                    final_time,
+                    date_str,
+                    "Pending",
+                    datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+                ],
+                value_input_option="USER_ENTERED"
+            )
 
 👤 {name}
 👨‍⚕️ {state.get("doctor")}
