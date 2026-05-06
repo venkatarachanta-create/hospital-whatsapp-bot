@@ -271,6 +271,8 @@ Ravi 10 May 10 AM
 👨‍⚕️ {state.get("doctor")}
 📅 {date_str}
 ⏰ {final_time}
+
+🔔 You will receive a reminder 1 hour before your appointment.
 """)
 
             user_state[From] = {"step": "menu"}
