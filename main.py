@@ -268,6 +268,8 @@ Ravi 10 May 10 AM
                 value_input_option="USER_ENTERED"
             )
 
+            response.message(f"""✅ Appointment Confirmed!
+
 👤 {name}
 👨‍⚕️ {state.get("doctor")}
 📅 {date_str}
